@@ -1,0 +1,69 @@
+# AgenticPlatform - Deploys supporting infrastructure in namespace
+#
+# DEPLOYS (in namespace):
+#   - MLflow (tracking server + MinIO + PostgreSQL)
+#   - Kagenti UI
+#
+# DOES NOT DEPLOY (external):
+#   - LLM endpoint (OpenAI, Llama Stack, vLLM, etc.) - bring your own
+#   - Vector stores - configure in Llama Stack
+#
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgenticPlatform
+metadata:
+  name: platform
+  namespace: my-agents
+spec:
+  # Default OpenAI-compatible endpoint for agents in this namespace (EXTERNAL - not deployed)
+  # Agents can override this in their own spec
+  openaiDefaults:
+    baseUrl: http://llama-stack-service.llama-stack.svc.cluster.local:8321
+    model: vllm-inference-1/qwen3-14b-awq
+    # For OpenAI as default:
+    # baseUrl: https://api.openai.com/v1
+    # model: gpt-4o
+    # apiKeySecretRef:
+    #   name: openai-api-key
+    #   key: api-key
+  
+  # Components to DEPLOY in this namespace
+  components:
+    # MLflow tracking (auto-deploys: mlflow server, minio, postgres)
+    mlflow:
+      enabled: true
+      # image: ghcr.io/mlflow/mlflow:v2.18.0      # optional override
+      # minioImage: quay.io/minio/minio:latest    # optional override
+      # postgresImage: postgres:15                 # optional override
+      storage:
+        size: 10Gi
+        # storageClassName: gp3-csi  # optional
+      postgres:
+        storage: 5Gi
+    
+    # Kagenti UI (agent discovery and chat interface)
+    kagenti:
+      enabled: true
+      # image: quay.io/opendatahub/kagenti:latest  # optional override
+  
+  # Global image overrides (alternative to per-component)
+  # images:
+  #   baseAgent: quay.io/myorg/base-agent:v1.0.0
+  #   mlflow: ghcr.io/mlflow/mlflow:v2.18.0
+  #   minio: quay.io/minio/minio:RELEASE.2024-01-01
+  #   postgres: postgres:16
+  #   kagentiUI: quay.io/myorg/kagenti:latest
+  #   kagentiProxy: nginx:1.25-alpine
+  
+  # Defaults applied to all BaseAgents in this namespace
+  defaults:
+    kagenti:
+      enabled: true  # All agents get Kagenti proxy
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+

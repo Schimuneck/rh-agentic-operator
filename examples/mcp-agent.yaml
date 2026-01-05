@@ -1,0 +1,66 @@
+# MCP Agent with GitHub Tools
+# This agent can access GitHub repositories via MCP protocol
+apiVersion: agents.redhat.com/v1alpha1
+kind: BaseAgent
+metadata:
+  name: code-agent
+spec:
+  # OpenAI-compatible endpoint configuration
+  # Each agent defines its own endpoint - can be different per agent
+  openai:
+    baseUrl: http://llama-stack-service:8321  # Local Llama Stack (OpenAI-compatible)
+    model: vllm-inference-1/qwen3-14b-awq
+    # For OpenAI directly:
+    # baseUrl: https://api.openai.com/v1
+    # model: gpt-4o
+    # apiKeySecretRef:
+    #   name: openai-api-key
+    #   key: api-key
+  
+  # MCP tools configuration
+  mcpTools:
+    - serverUrl: https://api.githubcopilot.com/mcp/x/repos/readonly
+      serverLabel: GitHub
+      secretRef:
+        name: github-token
+        key: token
+      # Optional: limit which tools are available
+      # allowedTools:
+      #   - list_branches
+      #   - get_file_contents
+      #   - search_code
+  
+  # MLflow tracking (optional - auto-configured if AgenticPlatform deployed)
+  mlflow:
+    trackingUri: http://mlflow:5000
+    experiment: code-agent
+  
+  # Agent card
+  agentCard:
+    description: "Code analysis agent - inspects GitHub repositories and analyzes code"
+    skills:
+      - id: analyze-code
+        name: Analyze Code
+        description: Analyze GitHub repositories, review code, and answer questions about codebases
+        tags:
+          - code
+          - github
+          - analysis
+      - id: search-repos
+        name: Search Repositories
+        description: Search for repositories and code across GitHub
+        tags:
+          - search
+          - github
+  
+  kagenti:
+    enabled: true
+---
+# GitHub token secret (create this separately with your actual token)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: github-token
+type: Opaque
+stringData:
+  token: "YOUR_GITHUB_TOKEN_HERE"

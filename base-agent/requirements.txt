@@ -1,0 +1,18 @@
+# MLflow ResponsesAgent
+mlflow>=2.18.0
+
+# Web framework
+fastapi>=0.115.0
+uvicorn>=0.32.0
+pydantic>=2.0.0
+
+# HTTP client
+httpx>=0.27.0
+
+# AWS S3 for MLflow artifact storage
+boto3>=1.34.0
+
+# OpenAI client (for compatibility)
+openai>=1.0.0
+
+

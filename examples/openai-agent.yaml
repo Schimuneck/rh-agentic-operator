@@ -1,0 +1,57 @@
+# OpenAI Agent Example
+# Shows how to use OpenAI (or any OpenAI-compatible API) directly
+apiVersion: agents.redhat.com/v1alpha1
+kind: BaseAgent
+metadata:
+  name: openai-agent
+spec:
+  # Using OpenAI directly
+  openai:
+    baseUrl: https://api.openai.com/v1
+    model: gpt-4o
+    apiKeySecretRef:
+      name: openai-api-key
+      key: api-key
+  
+  # RAG still works - uses file_search tool
+  rag:
+    vectorStoreIds:
+      - "vs_your_vector_store_id"
+    maxResults: 10
+  
+  # Agent card
+  agentCard:
+    description: "Agent powered by OpenAI GPT-4o"
+    skills:
+      - id: answer
+        name: Answer Questions
+        description: Answer questions using GPT-4o
+        tags:
+          - qa
+          - openai
+  
+  kagenti:
+    enabled: true
+---
+# OpenAI API Key Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openai-api-key
+type: Opaque
+stringData:
+  api-key: "sk-YOUR_OPENAI_API_KEY_HERE"
+---
+# Alternative: Azure OpenAI
+# apiVersion: agents.redhat.com/v1alpha1
+# kind: BaseAgent
+# metadata:
+#   name: azure-openai-agent
+# spec:
+#   llm:
+#     baseUrl: https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT
+#     model: gpt-4o
+#     apiKeySecretRef:
+#       name: azure-openai-key
+#       key: api-key
+

@@ -1,0 +1,94 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rh-agentic-operator
+  namespace: NAMESPACE_PLACEHOLDER
+  labels:
+    app.kubernetes.io/name: rh-agentic-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rh-agentic-operator
+  labels:
+    app.kubernetes.io/name: rh-agentic-operator
+rules:
+  # CRD watching (required by kopf) - this is cluster-wide, need watch permission
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  
+  # Namespace management (for labeling kagenti-enabled)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "patch"]
+  
+  # BaseAgent CRD management
+  - apiGroups: ["agents.redhat.com"]
+    resources: ["baseagents", "baseagents/status", "baseagents/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # AgenticPlatform CRD management
+  - apiGroups: ["agents.redhat.com"]
+    resources: ["agenticplatforms", "agenticplatforms/status", "agenticplatforms/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Core resources
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ServiceAccounts, Roles, RoleBindings (for Kagenti RBAC)
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ClusterRoles/ClusterRoleBindings (for Kagenti cluster-wide read)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # Deployments
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # OpenShift Routes
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # kagent CRDs
+  - apiGroups: ["kagent.dev"]
+    resources: ["agents", "modelconfigs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # kagenti CRDs (including resources that Kagenti UI needs to list)
+  - apiGroups: ["agent.kagenti.dev"]
+    resources: ["agents", "agentcards", "agentbuilds"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rh-agentic-operator
+  labels:
+    app.kubernetes.io/name: rh-agentic-operator
+subjects:
+  - kind: ServiceAccount
+    name: rh-agentic-operator
+    namespace: NAMESPACE_PLACEHOLDER
+roleRef:
+  kind: ClusterRole
+  name: rh-agentic-operator
+  apiGroup: rbac.authorization.k8s.io
+

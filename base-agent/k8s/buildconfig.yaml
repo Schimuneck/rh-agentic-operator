@@ -1,0 +1,26 @@
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: base-agent
+  namespace: NAMESPACE_PLACEHOLDER
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: base-agent
+  namespace: NAMESPACE_PLACEHOLDER
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: 'base-agent:latest'
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  triggers:
+    - type: ConfigChange

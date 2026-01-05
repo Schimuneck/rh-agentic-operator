@@ -1,0 +1,66 @@
+# Orchestrator Agent
+# This agent calls other specialized agents to answer complex questions
+apiVersion: agents.redhat.com/v1alpha1
+kind: BaseAgent
+metadata:
+  name: orchestrator
+spec:
+  # OpenAI-compatible endpoint (each agent can use different provider)
+  openai:
+    baseUrl: http://llama-stack-service:8321  # Local Llama Stack (OpenAI-compatible)
+    model: vllm-inference-1/qwen3-14b-awq
+    # Orchestrator might use a more powerful model:
+    # baseUrl: https://api.openai.com/v1
+    # model: gpt-4o
+    # apiKeySecretRef:
+    #   name: openai-api-key
+    #   key: api-key
+  
+  # A2A subagents to orchestrate
+  # The orchestrator will:
+  # 1. Fetch agent cards from each subagent
+  # 2. Select relevant agents based on the user's question
+  # 3. Craft specific questions for each selected agent
+  # 4. Call selected agents and collect responses
+  # 5. Synthesize a final answer from all inputs
+  subagents:
+    - name: docs-agent
+      url: http://docs-agent-adapter:8080
+      skill: search-docs
+      batch: knowledge
+    - name: code-agent
+      url: http://code-agent-adapter:8080
+      skill: analyze-code
+      batch: technical
+  
+  # Orchestration settings
+  orchestration:
+    maxSelected: 4        # Max agents to call per request
+    callTimeoutSeconds: 60
+    defaultBatch: default
+  
+  # The orchestrator can also have its own RAG
+  rag:
+    vectorStoreIds:
+      - "vs_overview_docs"
+    maxResults: 5
+  
+  # MLflow tracking (auto-configured if AgenticPlatform deployed)
+  mlflow:
+    trackingUri: http://mlflow:5000
+    experiment: orchestrator
+  
+  # Agent card
+  agentCard:
+    description: "Master orchestrator - routes questions to specialized agents and synthesizes comprehensive answers"
+    skills:
+      - id: orchestrate
+        name: Orchestrate
+        description: Route questions to the best specialized agents and synthesize answers
+        tags:
+          - orchestration
+          - routing
+          - multi-agent
+  
+  kagenti:
+    enabled: true

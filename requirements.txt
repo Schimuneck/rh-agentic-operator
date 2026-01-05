@@ -1,0 +1,12 @@
+# Kubernetes operator framework
+kopf>=1.37.0
+
+# Kubernetes client
+kubernetes>=28.1.0
+
+# Async support
+aiohttp>=3.9.0
+
+# Utilities
+pyyaml>=6.0
+

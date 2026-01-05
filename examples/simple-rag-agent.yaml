@@ -1,0 +1,60 @@
+# Simple RAG Agent
+# This agent uses vector stores for retrieval-augmented generation
+apiVersion: agents.redhat.com/v1alpha1
+kind: BaseAgent
+metadata:
+  name: docs-agent
+spec:
+  # OpenAI-compatible endpoint configuration
+  # Works with: OpenAI, Llama Stack, vLLM, Ollama, Azure OpenAI, etc.
+  openai:
+    baseUrl: http://llama-stack-service:8321  # Local Llama Stack (OpenAI-compatible)
+    model: vllm-inference-1/qwen3-14b-awq
+    # For OpenAI directly:
+    # baseUrl: https://api.openai.com/v1
+    # model: gpt-4o
+    # apiKeySecretRef:
+    #   name: openai-api-key
+    #   key: api-key
+  
+  # RAG configuration
+  rag:
+    vectorStoreIds:
+      - "vs_your_vector_store_id"
+    maxResults: 10
+  
+  # MLflow tracking
+  mlflow:
+    trackingUri: http://mlflow:5000
+    experiment: docs-agent
+    s3EndpointUrl: http://mlflow-minio:9000
+    credentialsSecretRef:
+      name: mlflow-minio-secret
+      accessKeyIdKey: MINIO_ROOT_USER
+      secretAccessKeyKey: MINIO_ROOT_PASSWORD
+  
+  # Agent card for A2A discovery
+  agentCard:
+    description: "Documentation search agent - answers questions from product documentation"
+    skills:
+      - id: search-docs
+        name: Search Documentation
+        description: Search and retrieve information from product documentation
+        tags:
+          - docs
+          - search
+          - rag
+  
+  # Enable Kagenti UI discovery
+  kagenti:
+    enabled: true
+  
+  # Resources
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
