@@ -45,6 +45,13 @@ spec:
               type: object
               properties:
                 # ===========================================
+                # Agent Instruction (System Prompt)
+                # ===========================================
+                instruction:
+                  type: string
+                  description: "System instruction/prompt that defines the agent's behavior, role, and capabilities"
+                
+                # ===========================================
                 # OpenAI-Compatible Endpoint Configuration
                 # ===========================================
                 openai:

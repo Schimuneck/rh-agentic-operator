@@ -5,6 +5,16 @@ kind: BaseAgent
 metadata:
   name: orchestrator
 spec:
+  # Agent instruction (system prompt) - defines the orchestrator's behavior
+  instruction: |
+    You are an intelligent orchestrator that coordinates multiple specialized agents.
+    Your role is to:
+    - Understand the user's question and determine which agents can help
+    - Route questions to appropriate specialized agents
+    - Synthesize information from multiple agents into comprehensive answers
+    - Clearly indicate which agent provided which information
+    - If no agents are relevant, use your own knowledge and tools to answer
+  
   # OpenAI-compatible endpoint (each agent can use different provider)
   openai:
     baseUrl: http://llama-stack-service:8321  # Local Llama Stack (OpenAI-compatible)

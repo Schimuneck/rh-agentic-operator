@@ -55,6 +55,9 @@ def build_deployment(name: str, namespace: str, spec: Dict[str, Any], owner: Dic
     agent_card = spec.get("agentCard", {})
     agent_description = agent_card.get("description", f"{name} agent")
     
+    # Agent instruction (system prompt)
+    agent_instruction = spec.get("instruction", "")
+    
     env = [
         {"name": "HOME", "value": "/tmp"},
         {"name": "AGENT_NAME", "value": name},
@@ -66,6 +69,10 @@ def build_deployment(name: str, namespace: str, spec: Dict[str, Any], owner: Dic
         {"name": "A2A_CALL_TIMEOUT_S", "value": str(orchestration.get("callTimeoutSeconds", C.DEFAULT_A2A_CALL_TIMEOUT_S))},
         {"name": "A2A_SELECTION_DEFAULT_BATCH", "value": orchestration.get("defaultBatch", C.DEFAULT_A2A_DEFAULT_BATCH)},
     ]
+    
+    # Add instruction if provided
+    if agent_instruction:
+        env.append({"name": "AGENT_INSTRUCTION", "value": agent_instruction})
     
     # OpenAI API Key (required for OpenAI/Azure, optional for local endpoints like Llama Stack)
     api_key_ref = openai_config.get("apiKeySecretRef", {})

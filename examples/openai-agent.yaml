@@ -5,6 +5,12 @@ kind: BaseAgent
 metadata:
   name: openai-agent
 spec:
+  # Agent instruction (system prompt) - defines the agent's behavior
+  instruction: |
+    You are a helpful AI assistant powered by GPT-4o.
+    Provide accurate, helpful responses to user questions.
+    When using RAG, cite the sources of your information.
+  
   # Using OpenAI directly
   openai:
     baseUrl: https://api.openai.com/v1
@@ -48,7 +54,7 @@ stringData:
 # metadata:
 #   name: azure-openai-agent
 # spec:
-#   llm:
+#   openai:
 #     baseUrl: https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_DEPLOYMENT
 #     model: gpt-4o
 #     apiKeySecretRef:

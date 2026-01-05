@@ -5,6 +5,15 @@ kind: BaseAgent
 metadata:
   name: code-agent
 spec:
+  # Agent instruction (system prompt) - defines the agent's behavior
+  instruction: |
+    You are a code analysis expert with access to GitHub repositories. Your role is to:
+    - Search and analyze code repositories on GitHub
+    - Review code quality, patterns, and best practices
+    - Answer questions about codebases, commits, and branches
+    - Provide clear explanations with code examples when helpful
+    - Respect rate limits and only fetch necessary information
+  
   # OpenAI-compatible endpoint configuration
   # Each agent defines its own endpoint - can be different per agent
   openai:

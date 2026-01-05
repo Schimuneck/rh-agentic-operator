@@ -87,6 +87,44 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# A2A Routing System Instruction (cannot be overridden)
+# =============================================================================
+
+A2A_ROUTING_INSTRUCTION = """You are an intelligent orchestrator that routes questions to specialized agents.
+
+CRITICAL RULES:
+1. You MUST respond with ONLY valid JSON - no markdown, no explanations, no extra text
+2. Analyze the user's question and available agents carefully
+3. Select only agents that are genuinely relevant to answering the question
+4. For each selected agent, craft a SPECIFIC question tailored to that agent's expertise
+5. The question should extract exactly the information needed from that agent
+6. Do NOT just repeat the user's question - make it specific to the agent's capabilities
+7. If no agents are relevant, return an empty selection
+
+OUTPUT FORMAT (strict JSON only):
+{
+  "selected": [
+    {
+      "name": "agent-name-exactly-as-provided",
+      "question": "specific question tailored for this agent",
+      "reason": "brief reason why this agent was selected"
+    }
+  ]
+}"""
+
+A2A_SYNTHESIS_INSTRUCTION = """You are an intelligent assistant synthesizing information from multiple sources.
+
+CRITICAL RULES:
+1. Answer the user's original question comprehensively
+2. Use the information from the consulted agents when relevant
+3. You may also use your tools (RAG, MCP) if additional information is needed
+4. Cite which agent provided which information when appropriate
+5. Be clear, accurate, and well-organized in your response
+6. If agents provided conflicting information, acknowledge and explain the differences
+7. Follow any additional instructions provided by the system"""
+
+
+# =============================================================================
 # Environment Parsing
 # =============================================================================
 
@@ -168,6 +206,9 @@ class BaseAgent(BaseClass):
     def __init__(self):
         super().__init__()
         
+        # Agent instruction (system prompt)
+        self.instruction = os.getenv("AGENT_INSTRUCTION", "").strip()
+        
         # Llama Stack config
         # Support both OPENAI_BASE_URL (new) and LLAMASTACK_URL (legacy)
         base = os.getenv("OPENAI_BASE_URL", os.getenv("LLAMASTACK_URL", "http://llama-stack-service:8321"))
@@ -189,7 +230,8 @@ class BaseAgent(BaseClass):
         self.a2a_max_selected = int(os.getenv("A2A_MAX_SELECTED", "4"))
         
         # OpenAI client for Llama Stack
-        self.client = OpenAI(base_url=self.base_url, api_key="not-needed")
+        api_key = os.getenv("OPENAI_API_KEY", "not-needed")
+        self.client = OpenAI(base_url=self.base_url, api_key=api_key)
         
         # Conversation state
         self._last_response_id: Optional[str] = None
@@ -202,6 +244,7 @@ class BaseAgent(BaseClass):
     
     def _log_config(self):
         logger.info("BaseAgent initialized")
+        logger.info(f"  Instruction: {self.instruction[:100]}..." if self.instruction else "  Instruction: (none)")
         logger.info(f"  Llama Stack: {self.base_url}")
         logger.info(f"  Model: {self.model}")
         logger.info(f"  Vector stores: {self.vector_store_ids or '(none)'}")
@@ -247,11 +290,23 @@ class BaseAgent(BaseClass):
     # Llama Stack API Helpers
     # =========================================================================
     
+    def _build_input_with_instruction(self, input_text: str, include_instruction: bool = True) -> str:
+        """Build input with optional instruction prefix."""
+        if include_instruction and self.instruction:
+            return f"""SYSTEM INSTRUCTION:
+{self.instruction}
+
+USER REQUEST:
+{input_text}"""
+        return input_text
+    
     def _responses_create(
-        self, input_text: str, tools: Optional[List] = None, use_previous: bool = False
+        self, input_text: str, tools: Optional[List] = None, use_previous: bool = False,
+        include_instruction: bool = True
     ) -> Tuple[Any, str]:
         """Call Llama Stack /v1/responses and return (response, output_text)."""
-        kwargs = {"model": self.model, "input": input_text}
+        full_input = self._build_input_with_instruction(input_text, include_instruction)
+        kwargs = {"model": self.model, "input": full_input}
         if tools:
             kwargs["tools"] = tools
         if use_previous and self._last_response_id:
@@ -335,7 +390,10 @@ class BaseAgent(BaseClass):
                 "skills": skill_info,
             })
         
-        prompt = f"""You are an orchestrator that routes questions to specialized agents.
+        # Use fixed A2A routing instruction (cannot be overridden by agent instruction)
+        prompt = f"""{A2A_ROUTING_INSTRUCTION}
+
+---
 
 USER'S QUESTION:
 {user_text}
@@ -343,28 +401,11 @@ USER'S QUESTION:
 AVAILABLE AGENTS IN BATCH "{batch_name}":
 {json.dumps(descs, indent=2)}
 
-YOUR TASK:
-1. Select which agents (if any) can help answer this question
-2. For each selected agent, craft a SPECIFIC question tailored to that agent's expertise
-   - The question should extract the information needed from that agent
-   - Be specific and focused on what that agent can provide
-   - Don't just repeat the user's question verbatim
-
-RESPOND WITH ONLY VALID JSON (no markdown, no explanation):
-{{
-  "selected": [
-    {{
-      "name": "agent-name",
-      "question": "specific question for this agent based on its expertise",
-      "reason": "brief reason why this agent was selected"
-    }}
-  ]
-}}
-
-If no agents are relevant, return: {{"selected": []}}"""
+RESPOND NOW WITH JSON ONLY:"""
 
         try:
-            _, text = self._responses_create(prompt, tools=None, use_previous=False)
+            # Internal routing call - don't include agent instruction
+            _, text = self._responses_create(prompt, tools=None, use_previous=False, include_instruction=False)
             parsed = self._parse_json(text)
             selected = parsed.get("selected", [])
             if not isinstance(selected, list):
@@ -511,26 +552,29 @@ If no agents are relevant, return: {{"selected": []}}"""
                 "answer_received": r["answer"][:5000],
             })
         
-        synthesis_prompt = f"""You are an intelligent assistant synthesizing information from multiple sources.
+        # Build synthesis prompt with fixed synthesis instruction + optional user instruction
+        user_instruction_section = ""
+        if self.instruction:
+            user_instruction_section = f"""
+ADDITIONAL AGENT INSTRUCTIONS (follow these alongside the synthesis rules):
+{self.instruction}
 
+---
+"""
+        
+        synthesis_prompt = f"""{A2A_SYNTHESIS_INSTRUCTION}
+{user_instruction_section}
 USER'S ORIGINAL QUESTION:
 {user_text}
 
 INFORMATION GATHERED FROM SPECIALIZED AGENTS:
 {json.dumps(qa_pairs, indent=2) if qa_pairs else "(No agents were consulted)"}
 
-YOUR TASK:
-- Answer the user's original question comprehensively
-- Use the information from the agents above when relevant
-- You may also use your tools (RAG, MCP) if additional information is needed
-- Cite which agent provided which information when appropriate
-- Be clear and well-organized
+PROVIDE YOUR ANSWER:"""
 
-ANSWER:"""
-
-        # 7. Final call with tools
+        # 7. Final call with tools (instruction already included in synthesis_prompt)
         logger.info(f"Final synthesis with {len(tools)} tools, {len(qa_pairs)} agent Q&A pairs")
-        response, answer = self._responses_create(synthesis_prompt, tools=tools, use_previous=True)
+        response, answer = self._responses_create(synthesis_prompt, tools=tools, use_previous=True, include_instruction=False)
         self._last_response_id = response.id
         
         routing = {

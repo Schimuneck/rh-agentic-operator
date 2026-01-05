@@ -6,11 +6,12 @@ A Kubernetes operator for deploying and managing AI agents at scale. Define agen
 
 **Simplify AI agent deployment on Kubernetes/OpenShift** by providing:
 
-- **One YAML per agent** - Deploy RAG, MCP, or orchestrator agents with a single CR
-- **Automatic platform setup** - MLflow, Kagenti UI deployed and configured automatically
-- **Cross-namespace management** - Cluster-wide operator reconciles agents in any namespace
-- **Kagent integration** - Automatic A2A protocol support via kagent framework
-- **MLflow tracking** - Experiment tracking with automatic credentials replication
+- **One YAML per agent** — Deploy RAG, MCP, or orchestrator agents with a single CR
+- **Custom instructions** — Define agent behavior with system prompts
+- **Automatic platform setup** — MLflow, Kagenti UI deployed and configured automatically
+- **Cross-namespace management** — Cluster-wide operator reconciles agents in any namespace
+- **Kagent integration** — Automatic A2A protocol support via kagent framework
+- **Full observability** — MLflow tracks prompts, responses, routing decisions, and subagent Q&A
 
 ## Architecture
 
@@ -18,49 +19,49 @@ A Kubernetes operator for deploying and managing AI agents at scale. Define agen
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    OPERATOR NAMESPACE (rh-agentic-system)                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌─────────────────────────┐  ┌────────────────┐  ┌────────────────────┐    │
-│  │  rh-agentic-operator    │  │  MLflow Stack  │  │  Kagenti UI        │    │
-│  │  (cluster-wide)         │  │  - mlflow      │  │  - agent discovery │    │
-│  │                         │  │  - minio       │  │  - cluster-wide    │    │
-│  │  Watches: BaseAgent     │  │  - postgres    │  │    agent listing   │    │
-│  │  across all namespaces  │  │                │  │                    │    │
-│  └─────────────────────────┘  └────────────────┘  └────────────────────┘    │
-│                                                                              │
+│                                                                             │
+│  ┌─────────────────────────┐  ┌────────────────┐  ┌────────────────────┐   │
+│  │  rh-agentic-operator    │  │  MLflow Stack  │  │  Kagenti UI        │   │
+│  │  (cluster-wide)         │  │  - mlflow      │  │  - agent discovery │   │
+│  │                         │  │  - minio       │  │  - cluster-wide    │   │
+│  │  Watches: BaseAgent     │  │  - postgres    │  │    agent listing   │   │
+│  │  across all namespaces  │  │                │  │                    │   │
+│  └─────────────────────────┘  └────────────────┘  └────────────────────┘   │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                    Reconciles agents in any namespace
-                                      │
-                                      ▼
+                                     │
+                   Reconciles agents in any namespace
+                                     │
+                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                       AGENT NAMESPACE (any namespace)                        │
+│                       AGENT NAMESPACE (any namespace)                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐    │
-│  │  rag-agent        │  │  mcp-agent        │  │  orchestrator-agent   │    │
-│  │  ├─ adapter       │  │  ├─ adapter       │  │  ├─ adapter           │    │
-│  │  ├─ kagent agent  │  │  ├─ kagent agent  │  │  ├─ kagent agent      │    │
-│  │  └─ kagenti proxy │  │  └─ kagenti proxy │  │  └─ kagenti proxy     │    │
-│  │                   │  │                   │  │                        │    │
-│  │  Capabilities:    │  │  Capabilities:    │  │  Capabilities:         │    │
-│  │  - Vector search  │  │  - GitHub MCP     │  │  - Call subagents      │    │
-│  │  - RAG retrieval  │  │  - Code search    │  │  - Smart routing       │    │
-│  └───────────────────┘  └───────────────────┘  └───────────────────────┘    │
-│                                                                              │
+│                                                                             │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │
+│  │  rag-agent        │  │  mcp-agent        │  │  orchestrator-agent   │   │
+│  │  ├─ adapter       │  │  ├─ adapter       │  │  ├─ adapter           │   │
+│  │  ├─ kagent agent  │  │  ├─ kagent agent  │  │  ├─ kagent agent      │   │
+│  │  └─ kagenti proxy │  │  └─ kagenti proxy │  │  └─ kagenti proxy     │   │
+│  │                   │  │                   │  │                       │   │
+│  │  Capabilities:    │  │  Capabilities:    │  │  Capabilities:        │   │
+│  │  - Vector search  │  │  - GitHub MCP     │  │  - Call subagents     │   │
+│  │  - RAG retrieval  │  │  - Code search    │  │  - Smart routing      │   │
+│  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │
+│                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      │ OpenAI-compatible API
-                                      ▼
+                                     │
+                                     │ OpenAI-compatible API
+                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                    EXTERNAL (bring your own)                                 │
+│                    EXTERNAL (bring your own)                                │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐    │
-│  │  LLM Endpoint     │  │  Vector Stores    │  │  MCP Servers          │    │
-│  │  - OpenAI         │  │  - Llama Stack    │  │  - GitHub Copilot     │    │
-│  │  - Llama Stack    │  │  - OpenAI         │  │  - Slack              │    │
-│  │  - vLLM           │  │                   │  │  - Custom             │    │
-│  │  - Ollama         │  │                   │  │                       │    │
-│  └───────────────────┘  └───────────────────┘  └───────────────────────┘    │
+│  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────────┐   │
+│  │  LLM Endpoint     │  │  Vector Stores    │  │  MCP Servers          │   │
+│  │  - OpenAI         │  │  - Llama Stack    │  │  - GitHub Copilot     │   │
+│  │  - Llama Stack    │  │  - OpenAI         │  │  - Slack              │   │
+│  │  - vLLM           │  │                   │  │  - Custom             │   │
+│  │  - Ollama         │  │                   │  │                       │   │
+│  └───────────────────┘  └───────────────────┘  └───────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -69,12 +70,12 @@ A Kubernetes operator for deploying and managing AI agents at scale. Define agen
 ### Required
 
 1. **OpenShift/Kubernetes cluster** with admin access
-2. **kagent** - Agent framework controller (cluster-wide)
+2. **kagent** — Agent framework controller (cluster-wide)
    - Provides: `agents.kagent.dev`, `modelconfigs.kagent.dev` CRDs
    - Install: https://github.com/kagent-dev/kagent
    - Typically in `kagent` namespace
 
-3. **OpenAI-compatible LLM endpoint** - One of:
+3. **OpenAI-compatible LLM endpoint** — One of:
    - OpenAI API (`https://api.openai.com/v1`)
    - Llama Stack (`http://llama-stack-service:8321`)
    - vLLM (`http://vllm-service:8000/v1`)
@@ -83,9 +84,9 @@ A Kubernetes operator for deploying and managing AI agents at scale. Define agen
 
 ### Optional
 
-- **Kagenti CRDs** - For UI discovery (`agents.agent.kagenti.dev`)
-- **Vector stores** - For RAG (in Llama Stack or OpenAI)
-- **MCP servers** - For tool integrations (GitHub, Slack, etc.)
+- **Kagenti CRDs** — For UI discovery (`agents.agent.kagenti.dev`)
+- **Vector stores** — For RAG (in Llama Stack or OpenAI)
+- **MCP servers** — For tool integrations (GitHub, Slack, etc.)
 
 ## Installation
 
@@ -234,10 +235,12 @@ metadata:
   name: rag-agent
   namespace: agentic-workloads
 spec:
-  # LLM configuration (inherited from platform if not specified)
-  # openai:
-  #   baseUrl: http://llama-stack-service:8321
-  #   model: vllm-shared/qwen3-14b-awq
+  # Agent instruction (system prompt)
+  instruction: |
+    You are a documentation assistant.
+    Search the knowledge base to answer questions accurately.
+    Always cite specific documents when possible.
+    If information is not found, clearly state that.
   
   # RAG configuration
   rag:
@@ -281,6 +284,12 @@ metadata:
   name: mcp-agent
   namespace: agentic-workloads
 spec:
+  # Agent instruction (system prompt)
+  instruction: |
+    You are a code analysis expert with access to GitHub.
+    Search repositories, review code, and provide insights.
+    Be specific and include code examples when helpful.
+  
   # MCP tools configuration
   mcpTools:
     - serverUrl: "https://api.githubcopilot.com/mcp/x/repos/readonly"
@@ -314,6 +323,12 @@ metadata:
   name: orchestrator-agent
   namespace: agentic-workloads
 spec:
+  # Agent instruction (custom behavior added to synthesis)
+  instruction: |
+    You are a technical support assistant.
+    Provide comprehensive answers using all available sources.
+    Be clear, accurate, and well-organized.
+  
   # Subagents to coordinate
   subagents:
     - name: rag-agent
@@ -343,40 +358,6 @@ spec:
 oc apply -f orchestrator-agent.yaml
 ```
 
-### Combined RAG + MCP Agent
-
-Single agent with both RAG and MCP capabilities.
-
-```yaml
-apiVersion: agents.redhat.com/v1alpha1
-kind: BaseAgent
-metadata:
-  name: full-agent
-  namespace: agentic-workloads
-spec:
-  # RAG for documentation
-  rag:
-    vectorStoreIds:
-      - "docs-vectorstore"
-    maxResults: 5
-  
-  # MCP for GitHub access
-  mcpTools:
-    - serverUrl: "https://api.githubcopilot.com/mcp/x/repos/readonly"
-      serverLabel: "GitHub"
-      secretRef:
-        name: github-token
-        key: token
-  
-  agentCard:
-    description: "Full-featured agent with documentation search and GitHub access"
-    skills:
-      - id: answer
-        name: Answer
-        description: "Answer using docs and GitHub"
-        tags: ["qa", "rag", "github"]
-```
-
 ### Using OpenAI Directly
 
 ```yaml
@@ -395,6 +376,10 @@ metadata:
   name: openai-agent
   namespace: agentic-workloads
 spec:
+  instruction: |
+    You are a helpful AI assistant.
+    Provide accurate and concise answers.
+  
   openai:
     baseUrl: https://api.openai.com/v1
     model: gpt-4o
@@ -409,6 +394,80 @@ spec:
         name: Chat
         description: "General conversation"
 ```
+
+## MLflow Tracking
+
+Every agent automatically logs to MLflow when `MLFLOW_TRACKING_URI` is configured (automatic when using `AgenticPlatform`).
+
+### What Gets Tracked
+
+| Artifact | Description |
+|----------|-------------|
+| `prompt.txt` | The full prompt sent to the LLM |
+| `response.txt` | The generated response |
+| `routing.json` | Agent routing decisions (orchestrator only) |
+| `subagent_results.json` | Full Q&A pairs from subagents (orchestrator only) |
+| `subagent_qa.md` | Human-readable Q&A summary (orchestrator only) |
+
+### Orchestrator Routing Tracking
+
+For orchestrator agents, MLflow captures the complete routing decision:
+
+```json
+{
+  "routing_ms": 1234,
+  "candidates": 5,
+  "batches": ["documentation", "code"],
+  "selected": [
+    {
+      "name": "rag-agent",
+      "question": "What are the deployment requirements for OpenShift?",
+      "reason": "User asked about deployment, RAG agent has documentation"
+    },
+    {
+      "name": "mcp-agent", 
+      "question": "List recent commits in the deployment repository",
+      "reason": "User mentioned code changes, MCP agent can access GitHub"
+    }
+  ]
+}
+```
+
+### Subagent Q&A Tracking
+
+The orchestrator also logs all Q&A exchanges with subagents:
+
+```json
+{
+  "qa_pairs": [
+    {
+      "name": "rag-agent",
+      "batch": "documentation",
+      "question": "What are the deployment requirements for OpenShift?",
+      "reason": "User asked about deployment",
+      "answer": "OpenShift requires...",
+      "elapsed_ms": 2500
+    },
+    {
+      "name": "mcp-agent",
+      "batch": "code",
+      "question": "List recent commits in the deployment repository",
+      "reason": "User mentioned code changes",
+      "answer": "Recent commits include...",
+      "elapsed_ms": 3200
+    }
+  ]
+}
+```
+
+### Viewing in MLflow UI
+
+1. Open MLflow UI: `https://mlflow-<namespace>.<cluster-domain>`
+2. Select the experiment (agent name)
+3. Click on a run to see:
+   - **Parameters**: Agent configuration
+   - **Artifacts**: Prompt, response, routing, Q&A logs
+   - **Metrics**: Latency, token counts
 
 ## What Gets Created
 
@@ -447,6 +506,7 @@ Example:
 
 | Field | Description | Default |
 |-------|-------------|---------|
+| `instruction` | System prompt defining agent behavior | - |
 | `openai.baseUrl` | OpenAI-compatible API URL | From platform |
 | `openai.model` | Model ID | From platform |
 | `openai.apiKeySecretRef` | Secret with API key | - |
@@ -508,26 +568,30 @@ oc get pods -n agentic-workloads
 
 ### Common Issues
 
-1. **ImagePullBackOff** - Agent namespace needs image-puller role:
+1. **ImagePullBackOff** — Agent namespace needs image-puller role:
    ```bash
    oc policy add-role-to-user system:image-puller \
      system:serviceaccount:<agent-ns>:default -n rh-agentic-system
    ```
 
-2. **MLflow bucket error** - Create the bucket in MinIO:
+2. **MLflow bucket error** — Create the bucket in MinIO:
    ```bash
    oc exec -n rh-agentic-system deploy/mlflow-minio -- mkdir -p /data/mlflow
    ```
 
-3. **Kagenti not listing agents** - Ensure namespace is labeled:
+3. **Kagenti not listing agents** — Ensure namespace is labeled:
    ```bash
    oc label namespace <agent-ns> kagenti-enabled=true
    ```
 
-4. **Model not found** - Check Llama Stack models:
+4. **Model not found** — Check Llama Stack models:
    ```bash
    curl http://llama-stack-service:8321/v1/models | jq '.data[].identifier'
    ```
+
+5. **Context length exceeded** — MCP tools returning too much data:
+   - Increase model context length in vLLM (`--max-model-len=65536`)
+   - Or use more specific queries to reduce response size
 
 ## License
 

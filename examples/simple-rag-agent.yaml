@@ -5,6 +5,15 @@ kind: BaseAgent
 metadata:
   name: docs-agent
 spec:
+  # Agent instruction (system prompt) - defines the agent's behavior
+  instruction: |
+    You are a helpful documentation assistant. Your role is to:
+    - Search and retrieve relevant information from product documentation
+    - Provide accurate, well-organized answers based on the documentation
+    - Cite specific documents or sections when possible
+    - If information is not found in the documentation, clearly say so
+    - Be concise but thorough in your responses
+  
   # OpenAI-compatible endpoint configuration
   # Works with: OpenAI, Llama Stack, vLLM, Ollama, Azure OpenAI, etc.
   openai:
