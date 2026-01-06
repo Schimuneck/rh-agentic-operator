@@ -273,10 +273,12 @@ def build_mlflow_resources(namespace: str, spec: Dict[str, Any], owner: Dict[str
                         "image": mlflow_image,
                         "command": ["/bin/bash", "-c"],
                         "args": [
-                            "pip install --user --quiet psycopg2-binary boto3 && "
-                            "mlflow server --host 0.0.0.0 --port 5000 "
-                            f"--backend-store-uri 'postgresql://mlflow:$(POSTGRES_PASSWORD)@mlflow-postgres:5432/mlflow' "
-                            "--default-artifact-root 's3://mlflow/'"
+                            'pip install --user --quiet psycopg2-binary boto3 && '
+                            'mlflow server --host 0.0.0.0 --port 5000 '
+                            '--backend-store-uri "postgresql://mlflow:$(POSTGRES_PASSWORD)@mlflow-postgres:5432/mlflow" '
+                            '--default-artifact-root "s3://mlflow/" '
+                            # MLflow 3.x security: allow OpenShift routes and internal services  
+                            '--allowed-hosts "*" --cors-allowed-origins "*"'
                         ],
                         "ports": [{"containerPort": 5000}],
                         "env": [

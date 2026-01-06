@@ -1,0 +1,356 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentworkflows.agents.redhat.com
+  labels:
+    app.kubernetes.io/name: rh-agentic-operator
+    app.kubernetes.io/managed-by: rh-agentic-operator
+spec:
+  group: agents.redhat.com
+  names:
+    kind: AgentWorkflow
+    listKind: AgentWorkflowList
+    plural: agentworkflows
+    singular: agentworkflow
+    shortNames:
+      - aw
+      - workflow
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Model
+          type: string
+          jsonPath: .status.modelStatus
+        - name: Engine
+          type: string
+          jsonPath: .status.engineStatus
+        - name: Agents
+          type: string
+          jsonPath: .status.agentsReady
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              properties:
+                # ===========================================
+                # Platform Reference
+                # ===========================================
+                platformRef:
+                  type: object
+                  description: "Reference to AgenticPlatform for MLflow, Kagenti, etc."
+                  properties:
+                    namespace:
+                      type: string
+                      description: "Namespace where AgenticPlatform is deployed"
+                      default: "rh-agentic-system"
+                
+                # ===========================================
+                # Model Deployment (vLLM via KServe)
+                # ===========================================
+                model:
+                  type: object
+                  description: "vLLM model deployment via KServe InferenceService"
+                  properties:
+                    name:
+                      type: string
+                      description: "Model name (used for InferenceService and ServingRuntime)"
+                    storageUri:
+                      type: string
+                      description: "Model storage URI (e.g., hf://Qwen/Qwen3-14B-AWQ)"
+                    externalUrl:
+                      type: string
+                      description: "External/shared model URL (skips model deployment, e.g., http://qwen3-14b-awq-predictor.mschimun.svc.cluster.local:8080/v1)"
+                    modelId:
+                      type: string
+                      description: "Model ID for Llama Stack registration (defaults to name)"
+                    vllm:
+                      type: object
+                      description: "vLLM-specific configuration"
+                      properties:
+                        buildInCluster:
+                          type: boolean
+                          description: "Build vLLM+OTEL image in-cluster via BuildConfig"
+                          default: true
+                        image:
+                          type: string
+                          description: "Pre-built vLLM image (if buildInCluster is false)"
+                        args:
+                          type: array
+                          description: "Additional vLLM arguments"
+                          items:
+                            type: string
+                        resources:
+                          type: object
+                          description: "GPU/CPU/Memory resources for model serving"
+                          properties:
+                            limits:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                            requests:
+                              type: object
+                              x-kubernetes-preserve-unknown-fields: true
+                
+                # ===========================================
+                # Engine Configuration (Llama Stack)
+                # ===========================================
+                engine:
+                  type: object
+                  description: "AI engine configuration (Llama Stack)"
+                  properties:
+                    type:
+                      type: string
+                      description: "Engine type"
+                      enum: ["llamastack"]
+                      default: "llamastack"
+                    name:
+                      type: string
+                      description: "Engine instance name"
+                      default: "llama-stack"
+                    singleInstancePerNamespace:
+                      type: boolean
+                      description: "Only allow one Llama Stack per namespace"
+                      default: true
+                    distributionName:
+                      type: string
+                      description: "Llama Stack distribution to use"
+                      default: "rh-dev"
+                    replicas:
+                      type: integer
+                      description: "Number of Llama Stack replicas"
+                      default: 1
+                    resources:
+                      type: object
+                      description: "Resource requests/limits for Llama Stack"
+                      properties:
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                
+                # ===========================================
+                # Vector Store Configuration
+                # ===========================================
+                vectorStore:
+                  type: object
+                  description: "Vector store for RAG agents"
+                  properties:
+                    name:
+                      type: string
+                      description: "Vector store name"
+                      default: "docs-vectorstore"
+                    embeddingModel:
+                      type: string
+                      description: "Embedding model for vectorization"
+                      default: "granite-embedding-125m"
+                    chunkSize:
+                      type: integer
+                      description: "Chunk size for document splitting"
+                      default: 1000
+                    chunkOverlap:
+                      type: integer
+                      description: "Overlap between chunks"
+                      default: 100
+                    sources:
+                      type: object
+                      description: "Document sources for ingestion"
+                      properties:
+                        urls:
+                          type: array
+                          description: "List of URLs to ingest (raw file URLs)"
+                          items:
+                            type: string
+                        github:
+                          type: object
+                          description: "GitHub repository source"
+                          properties:
+                            repo:
+                              type: string
+                              description: "GitHub repo (owner/repo format)"
+                            path:
+                              type: string
+                              description: "Path within repo"
+                              default: "/"
+                            branch:
+                              type: string
+                              description: "Branch to pull from"
+                              default: "main"
+                            filePattern:
+                              type: string
+                              description: "File pattern to match (e.g., *.md)"
+                              default: "*.md"
+                
+                # ===========================================
+                # MCP Tools Configuration
+                # ===========================================
+                mcpTools:
+                  type: array
+                  description: "MCP server configurations for agents"
+                  items:
+                    type: object
+                    required:
+                      - name
+                    properties:
+                      name:
+                        type: string
+                        description: "Tool name (referenced by agents)"
+                      serverUrl:
+                        type: string
+                        description: "MCP server URL or npx command"
+                      secretRef:
+                        type: object
+                        description: "Secret containing auth token"
+                        properties:
+                          name:
+                            type: string
+                          key:
+                            type: string
+                            default: "token"
+                
+                # ===========================================
+                # Agents Configuration
+                # ===========================================
+                agents:
+                  type: array
+                  description: "Agents to deploy (creates BaseAgent CRs)"
+                  items:
+                    type: object
+                    required:
+                      - name
+                      - type
+                    properties:
+                      name:
+                        type: string
+                        description: "Agent name"
+                      type:
+                        type: string
+                        description: "Agent type"
+                        enum: ["rag", "mcp", "orchestrator", "simple"]
+                      instruction:
+                        type: string
+                        description: "System instruction for the agent"
+                      description:
+                        type: string
+                        description: "Human-readable description for A2A discovery"
+                      rag:
+                        type: object
+                        description: "RAG configuration (for type: rag)"
+                        properties:
+                          vectorStoreIds:
+                            type: array
+                            description: "Vector store names or IDs (references vectorStore.name from this workflow)"
+                            items:
+                              type: string
+                          vectorStoreFromWorkflow:
+                            type: boolean
+                            description: "Auto-use vector store from this workflow (deprecated, use vectorStoreIds instead)"
+                            default: false
+                          maxResults:
+                            type: integer
+                            default: 10
+                      mcpTools:
+                        type: array
+                        description: "MCP tool names from workflow mcpTools (for type: mcp)"
+                        items:
+                          type: string
+                      subagents:
+                        type: array
+                        description: "Subagent names from this workflow (for type: orchestrator)"
+                        items:
+                          type: string
+                
+                # ===========================================
+                # Observability Configuration
+                # ===========================================
+                observability:
+                  type: object
+                  description: "Observability and tracing configuration"
+                  properties:
+                    otelEnabled:
+                      type: boolean
+                      description: "Enable OpenTelemetry tracing"
+                      default: true
+                    mlflowTracing:
+                      type: boolean
+                      description: "Convert OTEL spans to MLflow native traces"
+                      default: true
+            
+            # ===========================================
+            # Status
+            # ===========================================
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  description: "Overall workflow phase"
+                  enum: ["Pending", "Deploying", "Ready", "Failed"]
+                modelStatus:
+                  type: string
+                  description: "Model deployment status"
+                engineStatus:
+                  type: string
+                  description: "Llama Stack status"
+                vectorStoreStatus:
+                  type: string
+                  description: "Vector store status"
+                vectorStoreId:
+                  type: string
+                  description: "Created vector store ID"
+                agentsReady:
+                  type: string
+                  description: "Number of ready agents (e.g., 2/3)"
+                agents:
+                  type: array
+                  description: "Status of each agent"
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      ready:
+                        type: boolean
+                      endpoint:
+                        type: string
+                llamaStackEndpoint:
+                  type: string
+                  description: "Llama Stack service endpoint"
+                modelEndpoint:
+                  type: string
+                  description: "Model inference endpoint"
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                observedGeneration:
+                  type: integer
+                  description: "Last observed generation"
+

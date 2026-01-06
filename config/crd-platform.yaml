@@ -122,6 +122,54 @@ spec:
                         limits:
                           type: object
                           x-kubernetes-preserve-unknown-fields: true
+                
+                # ===========================================
+                # Dependencies Configuration (for AgentWorkflow)
+                # ===========================================
+                dependencies:
+                  type: object
+                  description: "Configuration for required cluster operators/CRDs"
+                  properties:
+                    kserve:
+                      type: object
+                      description: "KServe dependency for model serving"
+                      properties:
+                        required:
+                          type: boolean
+                          description: "Whether KServe is required for AgentWorkflows"
+                          default: true
+                        installIfMissing:
+                          type: boolean
+                          description: "Attempt to install KServe if missing (requires cluster-admin)"
+                          default: false
+                    llamastackOperator:
+                      type: object
+                      description: "Llama Stack Operator dependency"
+                      properties:
+                        required:
+                          type: boolean
+                          description: "Whether Llama Stack Operator is required for AgentWorkflows"
+                          default: true
+                        installIfMissing:
+                          type: boolean
+                          description: "Attempt to install Llama Stack Operator if missing"
+                          default: false
+                    otelCollector:
+                      type: object
+                      description: "OpenTelemetry Collector for tracing"
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: "Deploy OTEL collector per workflow namespace"
+                          default: true
+                    mlflowOtelBridge:
+                      type: object
+                      description: "OTLP to MLflow trace bridge"
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: "Deploy MLflow OTEL bridge for native traces"
+                          default: true
             
             status:
               type: object

@@ -34,6 +34,11 @@ rules:
     resources: ["agenticplatforms", "agenticplatforms/status", "agenticplatforms/finalizers"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   
+  # AgentWorkflow CRD management
+  - apiGroups: ["agents.redhat.com"]
+    resources: ["agentworkflows", "agentworkflows/status", "agentworkflows/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
   # Core resources
   - apiGroups: [""]
     resources: ["secrets", "configmaps", "services", "persistentvolumeclaims"]
@@ -75,6 +80,31 @@ rules:
   # kagenti CRDs (including resources that Kagenti UI needs to list)
   - apiGroups: ["agent.kagenti.dev"]
     resources: ["agents", "agentcards", "agentbuilds"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # KServe resources (for model serving via vLLM)
+  - apiGroups: ["serving.kserve.io"]
+    resources: ["inferenceservices", "servingruntimes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Llama Stack Operator resources
+  - apiGroups: ["llamastack.io"]
+    resources: ["llamastackdistributions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Batch jobs (for vectorstore ingestion)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # OpenShift Build resources (for in-cluster vLLM image builds)
+  - apiGroups: ["build.openshift.io"]
+    resources: ["buildconfigs", "builds"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # OpenShift Image resources
+  - apiGroups: ["image.openshift.io"]
+    resources: ["imagestreams", "imagestreamtags"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

@@ -43,6 +43,7 @@ MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "").strip()
 MLFLOW_ENABLED = bool(MLFLOW_TRACKING_URI)
 
 if MLFLOW_ENABLED:
+    import mlflow
     from mlflow.pyfunc import ResponsesAgent
     from mlflow.types.responses import (
         ResponsesAgentRequest,
@@ -50,6 +51,14 @@ if MLFLOW_ENABLED:
         ResponsesAgentStreamEvent,
     )
     from mlflow.models import set_model
+    
+    # Enable OpenAI autolog for automatic tracing of all OpenAI API calls
+    # Use basic autolog - arguments may vary by MLflow version
+    try:
+        mlflow.openai.autolog()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Could not enable OpenAI autolog: {e}")
+    
     BaseClass = ResponsesAgent
 else:
     # Stubs for when MLflow is disabled
@@ -112,16 +121,17 @@ OUTPUT FORMAT (strict JSON only):
   ]
 }"""
 
-A2A_SYNTHESIS_INSTRUCTION = """You are an intelligent assistant synthesizing information from multiple sources.
+A2A_SYNTHESIS_INSTRUCTION = """You are a helpful AI assistant providing comprehensive answers.
 
 CRITICAL RULES:
-1. Answer the user's original question comprehensively
-2. Use the information from the consulted agents when relevant
-3. You may also use your tools (RAG, MCP) if additional information is needed
-4. Cite which agent provided which information when appropriate
-5. Be clear, accurate, and well-organized in your response
-6. If agents provided conflicting information, acknowledge and explain the differences
-7. Follow any additional instructions provided by the system"""
+1. Answer the user's question directly and comprehensively
+2. Synthesize information from all available sources seamlessly
+3. Present the answer as if it came from a single unified system
+4. DO NOT mention "agents", "rag-agent", "mcp-agent" or other internal system components
+5. DO NOT say "based on information from X agent" - just provide the answer
+6. If information is incomplete or unavailable, state that directly without mentioning why
+7. Be clear, accurate, professional, and well-organized
+8. Follow any additional instructions provided by the system"""
 
 
 # =============================================================================
@@ -220,7 +230,8 @@ class BaseAgent(BaseClass):
         self.max_results = int(os.getenv("MAX_RESULTS", "10"))
         
         # RAG + MCP
-        self.vector_store_ids = parse_list_env("VECTOR_STORE_IDS", fallback_env="VECTOR_STORE_ID")
+        raw_vector_stores = parse_list_env("VECTOR_STORE_IDS", fallback_env="VECTOR_STORE_ID")
+        self.vector_store_ids = self._resolve_vector_store_ids(raw_vector_stores)
         self.mcp_tools = parse_mcp_tools_env()
         
         # A2A subagents
@@ -236,11 +247,56 @@ class BaseAgent(BaseClass):
         # Conversation state
         self._last_response_id: Optional[str] = None
         
+        # Session tracking for MLflow
+        self.agent_name = os.getenv("AGENT_NAME", "base-agent")
+        self._session_id: Optional[str] = None
+        
         # Exposed for MLflow logging
         self.last_routing: Optional[Dict[str, Any]] = None
         self.last_subagent_results: Optional[List[Dict[str, Any]]] = None
         
         self._log_config()
+    
+    def _resolve_vector_store_ids(self, raw_ids: List[str]) -> List[str]:
+        """Resolve vector store names to IDs.
+        
+        The Llama Stack file_search tool requires actual vector store IDs (vs_xxx),
+        but operators may configure by name for simplicity. This method resolves
+        names to IDs by querying the Llama Stack vector stores API.
+        """
+        if not raw_ids:
+            return []
+        
+        resolved = []
+        try:
+            # Query available vector stores
+            import requests
+            base_url = self.base_url.replace("/v1", "")
+            resp = requests.get(f"{base_url}/v1/vector_stores", timeout=10)
+            if resp.status_code == 200:
+                stores = resp.json().get("data", [])
+                name_to_id = {s.get("name"): s.get("id") for s in stores if s.get("name") and s.get("id")}
+                
+                for raw in raw_ids:
+                    if raw.startswith("vs_"):
+                        # Already an ID
+                        resolved.append(raw)
+                    elif raw in name_to_id:
+                        # Resolve name to ID
+                        resolved.append(name_to_id[raw])
+                        logger.info(f"Resolved vector store '{raw}' -> {name_to_id[raw]}")
+                    else:
+                        # Keep as-is (might work or fail later)
+                        logger.warning(f"Could not resolve vector store '{raw}', using as-is")
+                        resolved.append(raw)
+            else:
+                logger.warning(f"Could not list vector stores: {resp.status_code}")
+                resolved = raw_ids
+        except Exception as e:
+            logger.warning(f"Error resolving vector store IDs: {e}")
+            resolved = raw_ids
+        
+        return resolved
     
     def _log_config(self):
         logger.info("BaseAgent initialized")
@@ -312,7 +368,19 @@ USER REQUEST:
         if use_previous and self._last_response_id:
             kwargs["previous_response_id"] = self._last_response_id
         
-        response = self.client.responses.create(**kwargs)
+        try:
+            response = self.client.responses.create(**kwargs)
+        except Exception as e:
+            # Handle stale response ID (e.g., after Llama Stack restart)
+            error_msg = str(e)
+            if "not found" in error_msg.lower() and self._last_response_id:
+                logger.warning(f"Previous response ID invalid, retrying without it: {e}")
+                self._last_response_id = None
+                kwargs.pop("previous_response_id", None)
+                response = self.client.responses.create(**kwargs)
+            else:
+                raise
+        
         text = self._extract_text(response)
         return response, text
     
@@ -624,6 +692,34 @@ PROVIDE YOUR ANSWER:"""
         self.last_routing = None
         self.last_subagent_results = None
         
+        # Extract session/user IDs from request metadata or generate new ones
+        request_metadata = getattr(request, "metadata", {}) or {}
+        user_id = request_metadata.get("user_id", "anonymous")
+        session_id = request_metadata.get("session_id")
+        
+        # Use existing session or create new one for conversation continuity
+        if not session_id:
+            if not self._session_id:
+                self._session_id = f"session-{uuid4().hex[:12]}"
+            session_id = self._session_id
+        else:
+            self._session_id = session_id
+        
+        # Update MLflow trace with session metadata
+        if MLFLOW_ENABLED:
+            try:
+                mlflow.update_current_trace(
+                    tags={
+                        "trace.user_id": user_id,
+                        "trace.session_id": session_id or "",
+                        "trace.agent_name": self.agent_name,
+                        "trace.model": self.model,
+                        "trace.mode": "orchestration" if self.a2a_agents else "simple",
+                    }
+                )
+            except Exception as e:
+                logger.debug(f"Could not update trace tags: {e}")
+        
         try:
             if self.a2a_agents:
                 # Orchestration mode
@@ -631,6 +727,20 @@ PROVIDE YOUR ANSWER:"""
                 answer, routing, results = self._orchestrate(input_text, tools)
                 self.last_routing = routing
                 self.last_subagent_results = results
+                
+                # Log orchestration details to trace
+                if MLFLOW_ENABLED:
+                    try:
+                        mlflow.update_current_trace(
+                            tags={
+                                "orchestration.candidates": str(routing.get("candidates", 0)),
+                                "orchestration.selected_count": str(len(routing.get("selected", []))),
+                                "orchestration.batches": ",".join(routing.get("batches", [])),
+                                "orchestration.routing_ms": str(routing.get("routing_ms", 0)),
+                            }
+                        )
+                    except Exception as e:
+                        logger.debug(f"Could not update orchestration tags: {e}")
             else:
                 # Simple mode (no subagents)
                 logger.info(f"Simple mode: {len(tools)} tools")

@@ -116,6 +116,17 @@ def agent_card():
             "examples": ["Search for information about...", "What do you know about..."]
         })
     
+    # Add MCP tools skill if configured
+    if agent and agent.mcp_tools:
+        tool_labels = [t.get("server_label", "unknown") for t in agent.mcp_tools]
+        skills.append({
+            "id": "mcp",
+            "name": "External Tools",
+            "description": f"Access external services via MCP: {', '.join(tool_labels)}",
+            "tags": ["mcp", "tools", "external"],
+            "examples": ["Look up customer data", "Query external systems"]
+        })
+    
     # Add orchestration skill if subagents configured
     if agent and agent.a2a_agents:
         skills.append({
@@ -281,10 +292,27 @@ async def chat_completions(request: Request):
     
     req_id = str(uuid4())
     
-    # Build agent request
+    # Extract session/user IDs from headers or body for MLflow trace association
+    # Headers: X-User-Id, X-Session-Id
+    # Body: user_id, session_id (in metadata or root)
+    user_id = (
+        request.headers.get("X-User-Id") or 
+        body.get("user_id") or 
+        body.get("metadata", {}).get("user_id") or
+        "anonymous"
+    )
+    session_id = (
+        request.headers.get("X-Session-Id") or 
+        body.get("session_id") or 
+        body.get("metadata", {}).get("session_id")
+    )
+    
+    # Build agent request with metadata
     agent_request = ResponsesAgentRequest(
         input=[{"role": m.get("role", "user"), "content": m.get("content", "")} for m in messages]
     )
+    # Attach metadata for session tracking
+    agent_request.metadata = {"user_id": user_id, "session_id": session_id}
     
     # Handle streaming response
     if stream:
@@ -307,6 +335,13 @@ async def chat_completions(request: Request):
         mlflow.set_tag("component", "base-agent")
         mlflow.set_tag("request_id", req_id)
         mlflow.set_tag("model", agent.model)
+        
+        # Session tracking tags (using trace.* prefix for MLflow trace association)
+        mlflow.set_tag("trace.user_id", user_id)
+        if session_id:
+            mlflow.set_tag("trace.session_id", session_id)
+        mlflow.set_tag("trace.agent_name", AGENT_NAME)
+        
         if agent.vector_store_ids:
             mlflow.set_tag("vector_stores", ",".join(agent.vector_store_ids))
         if agent.mcp_tools:

@@ -1,0 +1,184 @@
+# Example AgentWorkflow: RAG + MCP + Orchestrator
+# 
+# This AgentWorkflow deploys a complete agentic AI stack:
+# - vLLM model serving via KServe (Qwen3-14B-AWQ)
+# - Llama Stack engine
+# - VectorStore with Llama Stack OpenAI compatibility docs
+# - RAG agent for documentation Q&A
+# - MCP agent with GitHub access
+# - Orchestrator agent that routes between RAG and MCP agents
+#
+# Prerequisites:
+# 1. AgenticPlatform deployed in rh-agentic-system namespace
+# 2. KServe installed in the cluster
+# 3. Llama Stack Operator installed in the cluster
+# 4. GitHub MCP token secret created (see below)
+#
+# Create the namespace and GitHub token first:
+#   oc new-project agenticworkflow
+#   oc create secret generic github-mcp-token \
+#     --from-literal=token=ghp_YOUR_GITHUB_TOKEN \
+#     -n agenticworkflow
+#
+# Then apply this workflow:
+#   oc apply -f examples/agentworkflow-qwen-rag-mcp-orchestrator.yaml
+#
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: qwen-rag-mcp-orchestrator
+  namespace: agenticworkflow
+spec:
+  # Reference to the platform namespace where MLflow, Kagenti, etc. are deployed
+  platformRef:
+    namespace: rh-agentic-system
+  
+  # ==========================================================================
+  # Model Configuration
+  # ==========================================================================
+  # Option 1: Use existing shared model (recommended when GPU resources are limited)
+  model:
+    name: qwen3-14b-awq
+    modelId: qwen3-14b-awq
+    # External URL to use a shared vLLM deployment (skips model deployment)
+    externalUrl: http://qwen3-14b-awq-predictor.mschimun.svc.cluster.local:8080/v1
+  
+  # Option 2: Deploy a new model (uncomment below, comment out externalUrl above)
+  # model:
+  #   name: qwen3-14b-awq
+  #   storageUri: hf://Qwen/Qwen3-14B-AWQ
+  #   modelId: qwen3-14b-awq
+  #   vllm:
+  #     buildInCluster: true  # Build vLLM+OTEL image in-cluster via BuildConfig
+  #     args:
+  #       - --dtype=auto
+  #       - --max-model-len=65536
+  #       - --enable-auto-tool-choice
+  #       - --tool-call-parser=hermes
+  #       - --gpu-memory-utilization=0.90
+  #     resources:
+  #       limits:
+  #         cpu: "4"
+  #         memory: 8Gi
+  #         nvidia.com/gpu: "1"
+  #       requests:
+  #         cpu: "2"
+  #         memory: 4Gi
+  #         nvidia.com/gpu: "1"
+  
+  # ==========================================================================
+  # Llama Stack Engine
+  # ==========================================================================
+  engine:
+    type: llamastack
+    name: llama-stack
+    singleInstancePerNamespace: true
+    distributionName: rh-dev
+    replicas: 1
+    resources:
+      limits:
+        cpu: "2"
+        memory: 12Gi
+      requests:
+        cpu: 250m
+        memory: 500Mi
+  
+  # ==========================================================================
+  # Vector Store (RAG Knowledge Base)
+  # ==========================================================================
+  vectorStore:
+    name: docs-vectorstore
+    embeddingModel: granite-embedding-125m
+    chunkSize: 1000
+    chunkOverlap: 100
+    sources:
+      urls:
+        # Red Bank Financial FAQ (PDF) - OpenDataHub RAG demo
+        - https://raw.githubusercontent.com/opendatahub-io/rag/main/demos/redbank-demo/pdf/redbankfinancial_faq.pdf
+  
+  # ==========================================================================
+  # MCP Tools Configuration
+  # ==========================================================================
+  mcpTools:
+    - name: github
+      serverUrl: "npx://@anthropic-ai/mcp-github"
+      secretRef:
+        name: github-mcp-token
+        key: token
+  
+  # ==========================================================================
+  # Agents
+  # ==========================================================================
+  agents:
+    # RAG Agent - answers questions from ingested documentation
+    - name: rag-agent
+      type: rag
+      description: "Red Bank Financial assistant that answers questions from the FAQ document"
+      instruction: |
+        You are a helpful assistant for Red Bank Financial.
+        
+        Your role is to:
+        1. Answer customer questions using the Red Bank Financial FAQ document
+        2. Provide accurate information about banking products, services, and policies
+        3. Be friendly, professional, and concise
+        
+        Always cite the FAQ document when providing answers.
+        If information is not available in the FAQ, clearly state that and suggest contacting customer service.
+      rag:
+        vectorStoreIds:
+          - docs-vectorstore  # References the vectorStore.name defined above
+        maxResults: 10
+    
+    # MCP Agent - accesses GitHub via MCP protocol
+    - name: mcp-agent
+      type: mcp
+      description: "GitHub assistant that can search code, list issues, and explore repositories"
+      instruction: |
+        You are a GitHub assistant with access to the GitHub MCP server.
+        
+        Your capabilities include:
+        1. Searching code across GitHub repositories
+        2. Listing and describing issues and pull requests
+        3. Exploring repository contents and structure
+        4. Finding release information and tags
+        
+        When asked about a repository or code:
+        - Use the appropriate GitHub MCP tools
+        - Provide concise, actionable answers
+        - Include relevant links when helpful
+        
+        If a query times out or fails, explain the issue and suggest alternatives.
+      mcpTools:
+        - github
+    
+    # Orchestrator Agent - routes questions to appropriate subagents
+    - name: orchestrator
+      type: orchestrator
+      description: "Intelligent router that directs questions to RAG or MCP agents and synthesizes answers"
+      instruction: |
+        You are an intelligent orchestrator that routes user questions to the appropriate specialized agents.
+        
+        Available agents:
+        - rag-agent: For questions about Red Bank Financial (banking products, services, FAQ)
+        - mcp-agent: For questions about GitHub repositories, code, issues, and releases
+        
+        Routing guidelines:
+        1. Banking/financial questions → rag-agent
+        2. Code/repository questions → mcp-agent
+        3. Questions spanning both topics → query both agents and synthesize
+        
+        After receiving responses from subagents:
+        - Synthesize a coherent, unified answer
+        - Cite which agent provided which information
+        - If agents disagree or provide conflicting info, note the discrepancy
+      subagents:
+        - rag-agent
+        - mcp-agent
+  
+  # ==========================================================================
+  # Observability
+  # ==========================================================================
+  observability:
+    otelEnabled: true       # Deploy OTEL Collector for trace collection
+    mlflowTracing: true     # Convert OTEL spans to native MLflow traces
+

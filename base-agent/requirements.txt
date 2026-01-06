@@ -1,5 +1,5 @@
 # MLflow ResponsesAgent
-mlflow>=2.18.0
+mlflow>=3.0.0
 
 # Web framework
 fastapi>=0.115.0

@@ -31,7 +31,7 @@ spec:
     # MLflow tracking (auto-deploys: mlflow server, minio, postgres)
     mlflow:
       enabled: true
-      # image: ghcr.io/mlflow/mlflow:v2.18.0      # optional override
+      # image: ghcr.io/mlflow/mlflow:v3.8.1      # optional override
       # minioImage: quay.io/minio/minio:latest    # optional override
       # postgresImage: postgres:15                 # optional override
       storage:
@@ -48,7 +48,7 @@ spec:
   # Global image overrides (alternative to per-component)
   # images:
   #   baseAgent: quay.io/myorg/base-agent:v1.0.0
-  #   mlflow: ghcr.io/mlflow/mlflow:v2.18.0
+  #   mlflow: ghcr.io/mlflow/mlflow:v3.8.1
   #   minio: quay.io/minio/minio:RELEASE.2024-01-01
   #   postgres: postgres:16
   #   kagentiUI: quay.io/myorg/kagenti:latest

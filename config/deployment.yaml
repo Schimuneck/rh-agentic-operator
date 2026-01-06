@@ -35,7 +35,7 @@ spec:
               value: "image-registry.openshift-image-registry.svc:5000/NAMESPACE_PLACEHOLDER/base-agent:latest"
             # MLflow stack images
             - name: MLFLOW_IMAGE
-              value: "ghcr.io/mlflow/mlflow:v2.18.0"
+              value: "ghcr.io/mlflow/mlflow:v3.8.1"
             - name: MLFLOW_MINIO_IMAGE
               value: "quay.io/minio/minio:latest"
             - name: MLFLOW_POSTGRES_IMAGE

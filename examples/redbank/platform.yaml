@@ -1,0 +1,38 @@
+# AgenticPlatform for Redbank Demo
+#
+# Deploys shared platform services (MLflow, Kagenti UI) in rh-agentic-system namespace.
+# These services are used by all agents across the cluster.
+#
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgenticPlatform
+metadata:
+  name: agentic-platform
+  namespace: rh-agentic-system
+spec:
+  # Default LLM config (will be overridden by AgentWorkflow)
+  openaiDefaults:
+    baseUrl: http://llama-stack-service.redbank-agentic.svc.cluster.local:8321
+    model: vllm-inference-1/qwen3-14b-awq
+  
+  # Platform components to deploy
+  components:
+    mlflow:
+      enabled: true
+      storage:
+        size: 10Gi
+    kagenti:
+      enabled: true
+  
+  # Dependencies configuration for AgentWorkflow
+  dependencies:
+    kserve:
+      required: true
+      installIfMissing: false
+    llamastackOperator:
+      required: true
+      installIfMissing: false
+    otelCollector:
+      enabled: true
+    mlflowOtelBridge:
+      enabled: true
+

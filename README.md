@@ -65,6 +65,151 @@ A Kubernetes operator for deploying and managing AI agents at scale. Define agen
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## AgentWorkflow: Deploy Everything with One YAML
+
+The `AgentWorkflow` CRD provides a **single-YAML deployment** of your entire agentic stack:
+
+- **vLLM model serving** via KServe (with in-cluster image builds)
+- **Llama Stack engine** for inference and vector operations
+- **VectorStore ingestion** from URLs or GitHub
+- **Multiple agents** (RAG, MCP, Orchestrator)
+- **Full observability** with OTEL → MLflow native traces
+
+### Example: Complete Stack
+
+```yaml
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: qwen-rag-mcp-orchestrator
+  namespace: agenticworkflow
+spec:
+  platformRef:
+    namespace: rh-agentic-system
+  
+  # Deploy vLLM model via KServe
+  model:
+    name: qwen3-14b-awq
+    storageUri: hf://Qwen/Qwen3-14B-AWQ
+    vllm:
+      buildInCluster: true
+      args:
+        - --max-model-len=65536
+        - --enable-auto-tool-choice
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+  
+  # Deploy Llama Stack engine
+  engine:
+    type: llamastack
+    distributionName: rh-dev
+  
+  # Ingest docs into vector store
+  vectorStore:
+    name: docs-vectorstore
+    embeddingModel: granite-embedding-125m
+    sources:
+      urls:
+        - https://raw.githubusercontent.com/llamastack/llama-stack/main/docs/docs/api-openai/index.mdx
+  
+  # MCP tools for agents
+  mcpTools:
+    - name: github
+      secretRef:
+        name: github-mcp-token
+        key: token
+  
+  # Deploy 3 agents automatically
+  agents:
+    - name: rag-agent
+      type: rag
+      instruction: "Answer questions from the docs..."
+      rag:
+        vectorStoreFromWorkflow: true
+    
+    - name: mcp-agent
+      type: mcp
+      instruction: "Access GitHub repositories..."
+      mcpTools: ["github"]
+    
+    - name: orchestrator
+      type: orchestrator
+      instruction: "Route to the right agent..."
+      subagents: ["rag-agent", "mcp-agent"]
+  
+  observability:
+    otelEnabled: true
+    mlflowTracing: true
+```
+
+### What Gets Deployed
+
+When you `oc apply` an `AgentWorkflow`:
+
+1. **KServe resources**: `ServingRuntime` + `InferenceService` for vLLM model
+2. **ImageStream + BuildConfig**: In-cluster vLLM+OTEL image build (if `buildInCluster: true`)
+3. **Llama Stack**: `LlamaStackDistribution` CR + ConfigMap with `run.yaml`
+4. **VectorStore Job**: Fetches URLs, uploads to Llama Stack, creates vector store
+5. **OTEL Collector**: Deployment + Service for trace collection
+6. **MLflow OTEL Bridge**: Converts OTLP spans to native MLflow traces
+7. **BaseAgent CRs**: One for each agent in `spec.agents[]`
+
+### Prerequisites for AgentWorkflow
+
+In addition to base operator requirements:
+
+| Component | CRD | Required |
+|-----------|-----|----------|
+| **KServe** | `inferenceservices.serving.kserve.io` | Yes |
+| **Llama Stack Operator** | `llamastackdistributions.llamastack.io` | Yes |
+
+Configure in `AgenticPlatform.spec.dependencies`:
+
+```yaml
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgenticPlatform
+metadata:
+  name: agentic-platform
+  namespace: rh-agentic-system
+spec:
+  dependencies:
+    kserve:
+      required: true
+      installIfMissing: false
+    llamastackOperator:
+      required: true
+      installIfMissing: false
+    otelCollector:
+      enabled: true
+    mlflowOtelBridge:
+      enabled: true
+```
+
+### Quick Start: Deploy AgentWorkflow
+
+```bash
+# 1. Create namespace
+oc new-project agenticworkflow
+
+# 2. Create GitHub token (for MCP agent)
+oc create secret generic github-mcp-token \
+  --from-literal=token=ghp_YOUR_TOKEN \
+  -n agenticworkflow
+
+# 3. Allow image pulls from operator namespace
+oc policy add-role-to-user system:image-puller \
+  system:serviceaccount:agenticworkflow:default \
+  -n rh-agentic-system
+
+# 4. Apply the AgentWorkflow
+oc apply -f examples/agentworkflow-qwen-rag-mcp-orchestrator.yaml
+
+# 5. Watch deployment progress
+oc get agentworkflow -n agenticworkflow -w
+oc get pods -n agenticworkflow -w
+```
+
 ## Requirements
 
 ### Required
@@ -108,6 +253,7 @@ cd rh-agentic-operator
 # Apply CRDs
 oc apply -f config/crd.yaml
 oc apply -f config/crd-platform.yaml
+oc apply -f config/crd-workflow.yaml
 
 # Apply RBAC (replace namespace)
 cat config/rbac.yaml | sed "s/NAMESPACE_PLACEHOLDER/rh-agentic-system/g" | oc apply -f -

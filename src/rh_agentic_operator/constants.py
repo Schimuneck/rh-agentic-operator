@@ -23,7 +23,7 @@ DEFAULT_BASE_AGENT_IMAGE = os.getenv(
 # MLflow images
 MLFLOW_IMAGE = os.getenv(
     "MLFLOW_IMAGE",
-    "ghcr.io/mlflow/mlflow:v2.18.0"
+    "ghcr.io/mlflow/mlflow:v3.8.1"
 )
 MLFLOW_MINIO_IMAGE = os.getenv(
     "MLFLOW_MINIO_IMAGE",

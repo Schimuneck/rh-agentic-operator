@@ -1,0 +1,152 @@
+# Redbank AgentWorkflow
+#
+# Deploys the complete Redbank agentic demo:
+# - vLLM model (Qwen3-14B-AWQ) via KServe
+# - Llama Stack engine with Milvus vector store
+# - Vector store ingestion from Redbank PDFs
+# - 3 agents: redbank-orchestrator, redbank-rag-agent, redbank-mcp-agent
+#
+apiVersion: agents.redhat.com/v1alpha1
+kind: AgentWorkflow
+metadata:
+  name: redbank-workflow
+  namespace: redbank-agentic
+spec:
+  # Reference to platform in operator namespace (for MLflow, Kagenti)
+  platformRef:
+    namespace: rh-agentic-system
+  
+  # ===========================================
+  # Model Deployment (vLLM via KServe)
+  # ===========================================
+  model:
+    name: qwen3-14b-awq
+    storageUri: hf://Qwen/Qwen3-14B-AWQ
+    modelId: qwen3-14b-awq
+    vllm:
+      buildInCluster: true
+      args:
+        - --dtype=auto
+        - --max-model-len=32768
+        - --enable-auto-tool-choice
+        - --tool-call-parser=hermes
+        - --gpu-memory-utilization=0.90
+        - --reasoning-parser=qwen3
+      resources:
+        limits:
+          cpu: "8"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "4"
+          memory: 10Gi
+          nvidia.com/gpu: "1"
+  
+  # ===========================================
+  # Engine Configuration (Llama Stack)
+  # ===========================================
+  engine:
+    type: llamastack
+    name: llama-stack
+    distributionName: rh-dev
+    replicas: 1
+  
+  # ===========================================
+  # Vector Store Configuration
+  # ===========================================
+  vectorStore:
+    name: redbank-kb-vector-store
+    embeddingModel: granite-embedding-125m
+    chunkSize: 512
+    chunkOverlap: 64
+    sources:
+      urls:
+        # Redbank documentation PDFs from GitHub
+        - https://raw.githubusercontent.com/opendatahub-io/rag/redbank/demos/redbank-demo/pdf/redbankfinancial_about.pdf
+        - https://raw.githubusercontent.com/opendatahub-io/rag/redbank/demos/redbank-demo/pdf/redbankfinancial_faq.pdf
+  
+  # ===========================================
+  # MCP Tools Configuration
+  # ===========================================
+  mcpTools:
+    - name: redbank-customer-db
+      serverUrl: http://redbank-mcp-server.redbank-agentic.svc.cluster.local:8000/mcp
+  
+  # ===========================================
+  # Agents Configuration
+  # ===========================================
+  agents:
+    # RAG Agent - answers from Redbank documentation
+    - name: redbank-rag-agent
+      type: rag
+      description: "Redbank documentation expert - answers questions about Red Bank Financial services, policies, and FAQs"
+      instruction: |
+        You are a Red Bank Financial documentation expert.
+        
+        Your role:
+        - Answer questions about Red Bank Financial's services, policies, and procedures
+        - Use the knowledge base to find accurate information
+        - Always cite specific documents or sections when possible
+        - If information is not found in the knowledge base, clearly state that
+        
+        Be helpful, accurate, and professional in all responses.
+      rag:
+        vectorStoreIds:
+          - redbank-kb-vector-store  # References vectorStore.name defined above
+        maxResults: 10
+    
+    # MCP Agent - accesses customer data via PostgreSQL
+    - name: redbank-mcp-agent
+      type: mcp
+      description: "Redbank customer data specialist - accesses customer accounts, statements, and transactions via the banking database"
+      instruction: |
+        You are a Red Bank Financial customer service representative with access to the customer database.
+        
+        Your role:
+        - Look up customer information by email, phone, or name
+        - Retrieve account statements and transaction history
+        - Provide account summaries and balance information
+        - Help customers understand their financial data
+        
+        Available tools:
+        - get_customer: Look up customer by email or phone
+        - get_customers_by_name: Search customers by name
+        - get_customer_statements: Get all statements for a customer
+        - get_statement_transactions: Get transactions for a statement
+        - get_customer_transactions: Get all transactions for a customer
+        - get_statement_summary: Get summary of a statement
+        - get_customer_summary: Get overall customer summary
+        
+        Always be professional and protect customer privacy.
+        Only provide information that the customer has explicitly asked for.
+      mcpTools:
+        - redbank-customer-db
+    
+    # Orchestrator Agent - routes to specialized agents
+    - name: redbank-orchestrator
+      type: orchestrator
+      description: "Red Bank Financial AI assistant - routes questions to documentation or customer data specialists and synthesizes comprehensive answers"
+      instruction: |
+        You are Red Bank Financial's intelligent AI assistant.
+        
+        Your role:
+        - Understand customer questions and route them to the appropriate specialist
+        - For questions about policies, services, or FAQs -> use the redbank-rag-agent
+        - For questions about specific customer data, accounts, or transactions -> use the redbank-mcp-agent
+        - For complex questions -> consult both agents and synthesize a comprehensive answer
+        
+        Guidelines:
+        - Be helpful, professional, and accurate
+        - Clearly explain where information comes from
+        - If you cannot find an answer, say so honestly
+        - Protect customer privacy at all times
+      subagents:
+        - redbank-rag-agent
+        - redbank-mcp-agent
+  
+  # ===========================================
+  # Observability Configuration
+  # ===========================================
+  observability:
+    otelEnabled: true
+    mlflowTracing: true

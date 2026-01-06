@@ -11,11 +11,13 @@ from . import constants as C
 from . import resources
 from . import proxy
 from . import platform
+from . import workflow
 
 logger = logging.getLogger(__name__)
 
 # Platform API constants
 PLATFORM_PLURAL = "agenticplatforms"
+WORKFLOW_PLURAL = "agentworkflows"
 
 # Operator namespace (where platform components are deployed)
 OPERATOR_NAMESPACE = os.getenv("OPERATOR_NAMESPACE", "rh-agentic-system")
@@ -31,6 +33,7 @@ def get_k8s_clients():
     return {
         "core": client.CoreV1Api(),
         "apps": client.AppsV1Api(),
+        "batch": client.BatchV1Api(),
         "custom": client.CustomObjectsApi(),
         "rbac": client.RbacAuthorizationV1Api(),
     }
@@ -129,6 +132,27 @@ def apply_resource(clients: dict, resource: dict) -> None:
                 else:
                     raise
         
+        elif kind == "Job":
+            try:
+                existing = clients["batch"].read_namespaced_job(name, namespace)
+                # Jobs are immutable once created - delete and recreate if needed
+                logger.info(f"Job {namespace}/{name} already exists, checking status")
+                # If job failed or completed, we might want to recreate
+                if existing.status.succeeded or existing.status.failed:
+                    logger.info(f"Job {namespace}/{name} finished, deleting for recreation")
+                    clients["batch"].delete_namespaced_job(
+                        name, namespace, 
+                        body=client.V1DeleteOptions(propagation_policy="Background")
+                    )
+                    import time
+                    time.sleep(2)  # Wait for deletion
+                    clients["batch"].create_namespaced_job(namespace, resource)
+            except ApiException as e:
+                if e.status == 404:
+                    clients["batch"].create_namespaced_job(namespace, resource)
+                else:
+                    raise
+        
         else:
             # Custom resources (ModelConfig, Agent, Route, etc.)
             group, version = api_version.split("/") if "/" in api_version else ("", api_version)
@@ -163,8 +187,15 @@ def _get_plural(kind: str) -> str:
         "Agent": "agents",
         "BaseAgent": "baseagents",
         "AgenticPlatform": "agenticplatforms",
+        "AgentWorkflow": "agentworkflows",
         "Route": "routes",
         "PersistentVolumeClaim": "persistentvolumeclaims",
+        "ServingRuntime": "servingruntimes",
+        "InferenceService": "inferenceservices",
+        "LlamaStackDistribution": "llamastackdistributions",
+        "ImageStream": "imagestreams",
+        "BuildConfig": "buildconfigs",
+        "Job": "jobs",
     }
     return plurals.get(kind, f"{kind.lower()}s")
 
@@ -407,6 +438,230 @@ def reconcile_platform(spec, name, namespace, body, status, **kwargs):
 def delete_platform(name, namespace, **kwargs):
     """Handle AgenticPlatform deletion."""
     logger.info(f"AgenticPlatform {namespace}/{name} deleted - resources will be garbage collected")
+
+
+# ============================================================================
+# AgentWorkflow Handlers
+# ============================================================================
+
+def check_required_crds(clients: dict, dependencies: dict) -> dict:
+    """Check if required CRDs are installed in the cluster.
+    
+    Returns dict with status for each dependency.
+    """
+    result = {}
+    
+    # Check KServe
+    kserve_config = dependencies.get("kserve", {})
+    if kserve_config.get("required", True):
+        try:
+            clients["custom"].get_cluster_custom_object(
+                "apiextensions.k8s.io", "v1", "customresourcedefinitions",
+                "inferenceservices.serving.kserve.io"
+            )
+            result["kserve"] = {"installed": True, "message": "KServe CRD found"}
+        except ApiException as e:
+            if e.status == 404:
+                result["kserve"] = {"installed": False, "message": "KServe CRD not found"}
+            else:
+                result["kserve"] = {"installed": False, "message": f"Error checking KServe: {e}"}
+    
+    # Check Llama Stack Operator
+    llamastack_config = dependencies.get("llamastackOperator", {})
+    if llamastack_config.get("required", True):
+        try:
+            clients["custom"].get_cluster_custom_object(
+                "apiextensions.k8s.io", "v1", "customresourcedefinitions",
+                "llamastackdistributions.llamastack.io"
+            )
+            result["llamastackOperator"] = {"installed": True, "message": "Llama Stack Operator CRD found"}
+        except ApiException as e:
+            if e.status == 404:
+                result["llamastackOperator"] = {"installed": False, "message": "Llama Stack Operator CRD not found"}
+            else:
+                result["llamastackOperator"] = {"installed": False, "message": f"Error checking Llama Stack: {e}"}
+    
+    return result
+
+
+@kopf.on.create(C.API_GROUP, C.API_VERSION, WORKFLOW_PLURAL)
+@kopf.on.update(C.API_GROUP, C.API_VERSION, WORKFLOW_PLURAL)
+def reconcile_agentworkflow(spec, name, namespace, body, status, **kwargs):
+    """Reconcile an AgentWorkflow resource.
+    
+    This handler orchestrates the deployment of:
+    1. vLLM model via KServe (ServingRuntime + InferenceService)
+    2. Llama Stack engine (ConfigMap + LlamaStackDistribution)
+    3. VectorStore ingestion (Job)
+    4. OTEL Collector for observability
+    5. MLflow OTEL Bridge for native traces
+    6. BaseAgent CRs for each agent in the workflow
+    """
+    logger.info(f"Reconciling AgentWorkflow {namespace}/{name}")
+    
+    clients = get_k8s_clients()
+    owner = body
+    
+    # Get platform config for dependencies and MLflow config
+    platform_ref = spec.get("platformRef", {})
+    platform_namespace = platform_ref.get("namespace", OPERATOR_NAMESPACE)
+    platform_config = get_platform_for_namespace(clients, platform_namespace)
+    platform_spec = platform_config.get("spec", {})
+    
+    # Check required CRDs based on platform dependencies config
+    dependencies = platform_spec.get("dependencies", {})
+    crd_status = check_required_crds(clients, dependencies)
+    
+    # Fail early if required CRDs are missing
+    for dep_name, dep_status in crd_status.items():
+        if not dep_status.get("installed"):
+            dep_config = dependencies.get(dep_name, {})
+            if dep_config.get("required", True) and not dep_config.get("installIfMissing", False):
+                return {
+                    "phase": "Failed",
+                    "conditions": [{
+                        "type": "Ready",
+                        "status": "False",
+                        "reason": "DependencyMissing",
+                        "message": f"{dep_name}: {dep_status.get('message')}",
+                    }],
+                }
+    
+    try:
+        workflow_status = {
+            "phase": "Deploying",
+            "modelStatus": "Pending",
+            "engineStatus": "Pending",
+            "vectorStoreStatus": "Pending",
+            "agentsReady": "0/0",
+            "agents": [],
+        }
+        
+        # 0. Replicate MLflow credentials to this namespace
+        replicate_mlflow_credentials(clients, platform_namespace, namespace, owner)
+        
+        # 1. Build and apply vLLM resources (if model specified and no externalUrl)
+        model_spec = spec.get("model", {})
+        external_model_url = model_spec.get("externalUrl") if model_spec else None
+        
+        if model_spec and external_model_url:
+            # Using external/shared model - skip deployment
+            logger.info(f"Using external model at {external_model_url}")
+            workflow_status["modelStatus"] = "External"
+            workflow_status["modelEndpoint"] = external_model_url
+        elif model_spec and model_spec.get("storageUri"):
+            # Deploy vLLM model via KServe
+            logger.info(f"Deploying vLLM model {model_spec.get('name')} in {namespace}")
+            
+            # Build vLLM image in-cluster (if configured)
+            vllm_config = model_spec.get("vllm", {})
+            if vllm_config.get("buildInCluster", True):
+                build_resources = workflow.build_vllm_buildconfig(name, namespace, spec, owner)
+                for resource in build_resources:
+                    apply_resource(clients, resource)
+                logger.info(f"Applied vLLM BuildConfig/ImageStream in {namespace}")
+            
+            # Create ServingRuntime
+            serving_runtime = workflow.build_serving_runtime(name, namespace, model_spec, owner)
+            apply_resource(clients, serving_runtime)
+            
+            # Create InferenceService
+            inference_service = workflow.build_inference_service(name, namespace, model_spec, owner)
+            apply_resource(clients, inference_service)
+            
+            workflow_status["modelStatus"] = "Deploying"
+            workflow_status["modelEndpoint"] = f"http://{model_spec['name']}-predictor.{namespace}.svc.cluster.local:8080"
+        
+        # 2. Deploy OTEL Collector (if observability enabled)
+        observability = spec.get("observability", {})
+        if observability.get("otelEnabled", True):
+            logger.info(f"Deploying OTEL Collector in {namespace}")
+            otel_resources = workflow.build_otel_collector(name, namespace, spec, owner, platform_namespace)
+            for resource in otel_resources:
+                apply_resource(clients, resource)
+        
+        # 3. Deploy MLflow OTEL Bridge (if mlflowTracing enabled)
+        if observability.get("mlflowTracing", True):
+            logger.info(f"Deploying MLflow OTEL Bridge in {namespace}")
+            bridge_resources = workflow.build_mlflow_otel_bridge(name, namespace, spec, owner, platform_namespace)
+            for resource in bridge_resources:
+                apply_resource(clients, resource)
+        
+        # 4. Deploy Llama Stack (if engine specified)
+        engine_spec = spec.get("engine", {})
+        if engine_spec.get("type") == "llamastack":
+            logger.info(f"Deploying Llama Stack in {namespace}")
+            
+            # Create ConfigMap with run.yaml
+            config_map = workflow.build_llamastack_config(name, namespace, spec, owner, platform_namespace)
+            apply_resource(clients, config_map)
+            
+            # Create LlamaStackDistribution
+            llamastack = workflow.build_llamastack_distribution(name, namespace, spec, owner, platform_namespace)
+            apply_resource(clients, llamastack)
+            
+            workflow_status["engineStatus"] = "Deploying"
+            workflow_status["llamaStackEndpoint"] = f"http://llama-stack-service.{namespace}.svc.cluster.local:8321"
+        
+        # 5. Deploy VectorStore ingestion Job (if vectorStore specified)
+        vector_store_spec = spec.get("vectorStore", {})
+        vector_store_id = None
+        if vector_store_spec:
+            logger.info(f"Creating VectorStore ingestion Job in {namespace}")
+            vs_resources = workflow.build_vectorstore_job(name, namespace, spec, owner)
+            for resource in vs_resources:
+                apply_resource(clients, resource)
+            workflow_status["vectorStoreStatus"] = "Ingesting"
+            # Vector store ID will be set by the job - for now use the name
+            vector_store_id = vector_store_spec.get("name", "docs-vectorstore")
+        
+        # 6. Create BaseAgent CRs for each agent in the workflow
+        agents_spec = spec.get("agents", [])
+        agent_statuses = []
+        for agent_spec in agents_spec:
+            agent_name = agent_spec["name"]
+            logger.info(f"Creating BaseAgent {namespace}/{agent_name}")
+            
+            baseagent = workflow.build_baseagent_from_workflow(
+                name, namespace, agent_spec, spec, owner,
+                vector_store_id=vector_store_id,
+                platform_namespace=platform_namespace,
+            )
+            apply_resource(clients, baseagent)
+            
+            agent_statuses.append({
+                "name": agent_name,
+                "ready": False,
+                "endpoint": f"http://{agent_name}.{namespace}.svc.cluster.local:8080",
+            })
+        
+        workflow_status["agents"] = agent_statuses
+        workflow_status["agentsReady"] = f"0/{len(agents_spec)}"
+        workflow_status["phase"] = "Ready"
+        workflow_status["modelStatus"] = "Ready"
+        workflow_status["engineStatus"] = "Ready"
+        workflow_status["vectorStoreStatus"] = "Ready" if vector_store_spec else "NotConfigured"
+        workflow_status["vectorStoreId"] = vector_store_id
+        
+        return workflow_status
+    
+    except Exception as e:
+        logger.error(f"Failed to reconcile AgentWorkflow {namespace}/{name}: {e}", exc_info=True)
+        return {
+            "phase": "Failed",
+            "conditions": [{
+                "type": "Ready",
+                "status": "False",
+                "reason": "ReconciliationFailed",
+                "message": str(e)[:200],
+            }],
+        }
+
+
+@kopf.on.delete(C.API_GROUP, C.API_VERSION, WORKFLOW_PLURAL)
+def delete_agentworkflow(name, namespace, **kwargs):
+    """Handle AgentWorkflow deletion."""
+    logger.info(f"AgentWorkflow {namespace}/{name} deleted - resources will be garbage collected")
 
 
 # ============================================================================

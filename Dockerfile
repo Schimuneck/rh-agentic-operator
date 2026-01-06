@@ -22,3 +22,5 @@ EXPOSE 8080
 # Run the operator
 CMD ["kopf", "run", "--standalone", "--all-namespaces", "-m", "rh_agentic_operator.operator"]
 
+
+
